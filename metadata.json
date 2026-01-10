@@ -1,0 +1,5 @@
+{
+  "name": "Copy of Supabase Realtime Chess",
+  "description": "A real-time multiplayer 1v1 chess application using Supabase for live state synchronization.",
+  "requestFramePermissions": []
+}
