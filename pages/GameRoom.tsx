@@ -41,15 +41,14 @@ const GameRoom: React.FC = () => {
       } else if (data.player_black === userId) {
           role = 'b';
       } else if (!data.player_white) {
-          // Claim White (rare case if created without owner, or reset)
+          // Claim White
           await supabase.from('games').update({ player_white: userId }).eq('id', gameId);
           role = 'w';
           data.player_white = userId;
       } else if (!data.player_black) {
-          // Claim Black - JOINING THE GAME
+          // Claim Black
           await supabase.from('games').update({ player_black: userId, status: 'active' }).eq('id', gameId);
           role = 'b';
-          // Optimistically update local data so UI updates immediately
           data.player_black = userId;
           data.status = 'active';
       }
@@ -84,7 +83,6 @@ const GameRoom: React.FC = () => {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
         (payload) => {
-          console.log('Realtime Game Update:', payload);
           const newData = payload.new as GameState;
           setGameState(newData);
           
@@ -110,14 +108,11 @@ const GameRoom: React.FC = () => {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'moves', filter: `game_id=eq.${gameId}` },
         (payload) => {
-            console.log('Realtime Move:', payload);
             const newMove = payload.new as MoveRecord;
             setGame(new Chess(newMove.fen_after));
         }
       )
-      .subscribe((status) => {
-        console.log(`Subscription status for game ${gameId}:`, status);
-      });
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
@@ -126,30 +121,33 @@ const GameRoom: React.FC = () => {
 
   // Handle Move
   const onPieceDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
+    // Basic checks
     if (playerRole === 'spectator') return false;
     if (game.turn() !== playerRole) return false;
     if (gameState?.status === 'finished') return false;
-    if (gameState?.status === 'waiting') {
-        alert("Wait for an opponent to join!");
-        return false;
-    }
+    
+    // ALLOW moves in 'waiting' state so users can test immediately.
+    // We will just implicitly set status to 'active' if it was 'waiting'.
 
     try {
       const gameCopy = new Chess(game.fen());
       const move = gameCopy.move({
         from: sourceSquare,
         to: targetSquare,
-        promotion: 'q', // Always default to queen for simplicity in this UI
+        promotion: 'q', 
       });
 
-      if (!move) return false;
+      if (!move) {
+          console.log("Invalid move according to chess.js:", sourceSquare, targetSquare);
+          return false;
+      }
 
       // Optimistic Update
       setGame(gameCopy);
 
       const updateGame = async () => {
         const newFen = gameCopy.fen();
-        let status = 'active';
+        let status = gameState?.status === 'waiting' ? 'active' : (gameState?.status || 'active');
 
         if (gameCopy.isCheckmate() || gameCopy.isDraw() || gameCopy.isStalemate()) {
           status = 'finished';
@@ -157,24 +155,30 @@ const GameRoom: React.FC = () => {
 
         const turnText = gameCopy.turn() === 'w' ? 'white' : 'black';
 
-        await supabase.from('moves').insert({
+        // 1. Log move
+        const { error: moveError } = await supabase.from('moves').insert({
           game_id: gameId,
           from_square: sourceSquare,
           to_square: targetSquare,
           fen_after: newFen,
         });
 
-        await supabase.from('games').update({
+        if (moveError) console.error("Move insert failed", moveError);
+
+        // 2. Update game state
+        const { error: gameError } = await supabase.from('games').update({
           fen: newFen,
           status: status,
           turn: turnText
         }).eq('id', gameId);
+        
+        if (gameError) console.error("Game update failed", gameError);
       };
 
       updateGame();
       return true;
     } catch (e) {
-      console.error(e);
+      console.error("Move execution error:", e);
       return false;
     }
   };
@@ -223,8 +227,8 @@ const GameRoom: React.FC = () => {
   }
 
   const getStatusMessage = () => {
-    if (gameState?.status === 'waiting') return 'Waiting for opponent...';
     if (gameState?.status === 'finished') return winnerText;
+    if (gameState?.status === 'waiting') return 'Waiting for opponent (You can still move)';
     return `${turnColor}'s Turn ${game.inCheck() ? '(Check!)' : ''}`;
   };
 
@@ -250,7 +254,7 @@ const GameRoom: React.FC = () => {
                     </button>
                 </h3>
                 <div className={`text-lg font-bold flex items-center gap-2 ${
-                    gameState?.status === 'active' && isMyTurn ? 'text-emerald-400' : 'text-white'
+                    isMyTurn ? 'text-emerald-400' : 'text-white'
                 }`}>
                     {gameState?.status === 'finished' && <Trophy className="w-5 h-5 text-yellow-400" />}
                     {getStatusMessage()}
@@ -279,20 +283,7 @@ const GameRoom: React.FC = () => {
                     >
                         <Copy className="w-4 h-4" /> Copy Link
                     </button>
-                    <div className="flex items-start gap-2 text-xs text-blue-300/70 mt-3">
-                        <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>Testing locally? Open the link in a <strong>Private/Incognito</strong> window.</span>
-                    </div>
                  </div>
-            )}
-            
-            {gameState?.status === 'waiting' && playerRole !== 'spectator' && (
-                <div className="p-3 bg-yellow-900/40 border border-yellow-700/50 rounded-lg text-yellow-200 text-xs">
-                     <p className="font-bold flex items-center gap-1 mb-1">
-                        <AlertTriangle className="w-3 h-3" /> Why am I waiting?
-                     </p>
-                     <p>You are waiting for a <strong>different</strong> player. If you open this link in the same browser, you are still "You".</p>
-                </div>
             )}
         </div>
 
@@ -310,7 +301,7 @@ const GameRoom: React.FC = () => {
                     {playerRole === 'w' ? 'B' : 'W'}
                 </div>
                 <span>
-                   {gameState?.status === 'waiting' ? 'Waiting for opponent...' : 'Opponent'}
+                   {gameState?.status === 'waiting' ? 'Waiting...' : 'Opponent'}
                 </span>
             </div>
 
