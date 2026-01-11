@@ -64,7 +64,7 @@ const Home: React.FC = () => {
                 <Crown className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-blue-400">
-                Supabase Chess
+                TakaDori online- Chess
             </h1>
             <p className="text-slate-400 mt-2">Real-time 1v1 multiplayer chess</p>
         </div>
@@ -120,7 +120,7 @@ const Home: React.FC = () => {
       </div>
 
       <footer className="z-10 mt-8 text-slate-500 text-sm">
-        Powered by React, Supabase & Chess.js
+        Powered by 1only TakaDori
       </footer>
     </div>
   );
