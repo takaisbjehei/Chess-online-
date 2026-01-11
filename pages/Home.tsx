@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { getUserId } from '../lib/utils';
-import { Play, Search, Crown, AlertCircle } from 'lucide-react';
+import { Play, Search, Crown, AlertCircle, Trash2 } from 'lucide-react';
+import { USER_ID_KEY } from '../constants';
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
@@ -15,11 +16,15 @@ const Home: React.FC = () => {
     setErrorMsg(null);
     const userId = getUserId();
     
+    // Generate a random 4-digit number (1000-9999)
+    const gameId = Math.floor(1000 + Math.random() * 9000).toString();
+
     try {
-      // Create new game, I am player_white by default
+      // Create new game with explicit ID
       const { data, error } = await supabase
         .from('games')
         .insert({
+          id: gameId,
           player_white: userId,
           status: 'waiting',
           fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
@@ -37,7 +42,12 @@ const Home: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Creation error:', err);
-      setErrorMsg(err.message || 'Failed to create game. Please check your connection.');
+      // Handle collision or connection error
+      if (err.code === '23505') { // Duplicate key error
+         setErrorMsg('Game ID collision, please try again.');
+      } else {
+         setErrorMsg(err.message || 'Failed to create game. Please check your connection.');
+      }
       setCreating(false);
     }
   };
@@ -46,6 +56,13 @@ const Home: React.FC = () => {
     e.preventDefault();
     if (joinId.trim()) {
       navigate(`/game/${joinId.trim()}`);
+    }
+  };
+
+  const resetProfile = () => {
+    if (window.confirm("This will generate a new User ID for you. Use this to simulate a second player in the same browser.")) {
+        localStorage.removeItem(USER_ID_KEY);
+        window.location.reload();
     }
   };
 
@@ -102,15 +119,16 @@ const Home: React.FC = () => {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
                     <input
                         type="text"
-                        placeholder="Enter Game ID to Join"
+                        placeholder="Enter 4-Digit Game ID"
                         value={joinId}
                         onChange={(e) => setJoinId(e.target.value)}
+                        maxLength={4}
                         className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-500"
                     />
                 </div>
                 <button 
                     type="submit"
-                    disabled={!joinId} 
+                    disabled={!joinId || joinId.length < 4} 
                     className="w-full mt-3 py-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     Join Game
@@ -119,8 +137,11 @@ const Home: React.FC = () => {
         </div>
       </div>
 
-      <footer className="z-10 mt-8 text-slate-500 text-sm">
-        Powered by 1only TakaDori
+      <footer className="z-10 mt-8 flex flex-col items-center gap-2 text-slate-500 text-sm">
+        <p>Powered by 1only TakaDori</p>
+        <button onClick={resetProfile} className="flex items-center gap-1 text-xs text-slate-600 hover:text-red-400 transition-colors">
+            <Trash2 className="w-3 h-3" /> Reset Profile (Testing)
+        </button>
       </footer>
     </div>
   );

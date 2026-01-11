@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase';
 import { getUserId } from '../lib/utils';
 import { GameState, Player, MoveRecord } from '../types';
 import CustomChessBoard from '../components/CustomChessBoard';
-import { Copy, Users, Flag, Trophy, Loader2 } from 'lucide-react';
+import { Copy, Users, Flag, Trophy, Loader2, Info } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const GameRoom: React.FC = () => {
@@ -226,7 +226,9 @@ const GameRoom: React.FC = () => {
                 <Users className="w-6 h-6" />
                 Chess Online
             </h1>
-            <p className="text-xs text-slate-400">ID: {gameId?.slice(0,8)}...</p>
+            <p className="text-lg text-slate-300 font-mono bg-slate-900 px-2 py-1 rounded w-fit mt-2">
+                Code: <span className="text-emerald-400 font-bold">{gameId}</span>
+            </p>
         </div>
 
         <div className="flex-1 space-y-6">
@@ -255,13 +257,17 @@ const GameRoom: React.FC = () => {
 
             {gameState?.status === 'waiting' && (
                  <div className="bg-blue-900/30 p-4 rounded-lg border border-blue-800 animate-pulse">
-                    <p className="text-sm text-blue-200 mb-3">Share this link to invite a friend:</p>
+                    <p className="text-sm text-blue-200 mb-3">Share this code <span className="font-mono font-bold">{gameId}</span> to play!</p>
                     <button 
                         onClick={copyInviteLink}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium transition-colors"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium transition-colors mb-2"
                     >
-                        <Copy className="w-4 h-4" /> Copy Game Link
+                        <Copy className="w-4 h-4" /> Copy Link
                     </button>
+                    <div className="flex items-start gap-2 text-xs text-blue-300/70 mt-3">
+                        <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>Testing locally? Open the link in a <strong>Private/Incognito</strong> window or use the "Reset Profile" button on the home page.</span>
+                    </div>
                  </div>
             )}
         </div>
