@@ -139,7 +139,7 @@ const GameRoom: React.FC = () => {
       const move = gameCopy.move({
         from: sourceSquare,
         to: targetSquare,
-        promotion: piece[1]?.toLowerCase() ?? 'q',
+        promotion: 'q', // Always default to queen for simplicity in this UI
       });
 
       if (!move) return false;
@@ -174,6 +174,7 @@ const GameRoom: React.FC = () => {
       updateGame();
       return true;
     } catch (e) {
+      console.error(e);
       return false;
     }
   };
