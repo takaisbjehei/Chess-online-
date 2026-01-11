@@ -1,11 +1,11 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import { supabase } from '../lib/supabase';
 import { getUserId } from '../lib/utils';
 import { GameState, Player, MoveRecord } from '../types';
 import CustomChessBoard from '../components/CustomChessBoard';
-import { Copy, Users, Flag, Trophy, Loader2, Info } from 'lucide-react';
+import { Copy, Users, Flag, Trophy, Loader2, Info, AlertTriangle, RefreshCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const GameRoom: React.FC = () => {
@@ -19,65 +19,76 @@ const GameRoom: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize and Fetch Game
-  useEffect(() => {
+  // Function to fetch game state manually
+  const fetchGame = useCallback(async () => {
     if (!gameId) return;
+    try {
+      const { data, error } = await supabase
+        .from('games')
+        .select('*')
+        .eq('id', gameId)
+        .single();
 
-    const fetchGame = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('games')
-          .select('*')
-          .eq('id', gameId)
-          .single();
+      if (error) throw error;
+      if (!data) throw new Error('Game not found');
 
-        if (error) throw error;
-        if (!data) throw new Error('Game not found');
-
-        // Determine Role
-        let role: Player['color'] = 'spectator';
-        if (data.player_white === userId) role = 'w';
-        else if (data.player_black === userId) role = 'b';
-        else if (!data.player_white) {
-            // Claim White
-            await supabase.from('games').update({ player_white: userId }).eq('id', gameId);
-            role = 'w';
-        } else if (!data.player_black) {
-            // Claim Black
-            await supabase.from('games').update({ player_black: userId, status: 'active' }).eq('id', gameId);
-            role = 'b';
-        }
-
-        setPlayerRole(role);
-        setGameState(data);
-        const newGame = new Chess(data.fen);
-        setGame(newGame);
-        setLoading(false);
-
-      } catch (err: any) {
-        console.error('Error fetching game:', err);
-        setError('Could not load game. It might not exist.');
-        setLoading(false);
+      // Determine Role
+      let role: Player['color'] = 'spectator';
+      
+      // Check if I am already registered
+      if (data.player_white === userId) {
+          role = 'w';
+      } else if (data.player_black === userId) {
+          role = 'b';
+      } else if (!data.player_white) {
+          // Claim White (rare case if created without owner, or reset)
+          await supabase.from('games').update({ player_white: userId }).eq('id', gameId);
+          role = 'w';
+          data.player_white = userId;
+      } else if (!data.player_black) {
+          // Claim Black - JOINING THE GAME
+          await supabase.from('games').update({ player_black: userId, status: 'active' }).eq('id', gameId);
+          role = 'b';
+          // Optimistically update local data so UI updates immediately
+          data.player_black = userId;
+          data.status = 'active';
       }
-    };
 
-    fetchGame();
+      setPlayerRole(role);
+      setGameState(data);
+      
+      // Update chess instance
+      const newGame = new Chess(data.fen);
+      setGame(newGame);
+      setLoading(false);
+
+    } catch (err: any) {
+      console.error('Error fetching game:', err);
+      setError('Could not load game. It might not exist.');
+      setLoading(false);
+    }
   }, [gameId, userId]);
+
+  // Initial Fetch
+  useEffect(() => {
+    fetchGame();
+  }, [fetchGame]);
 
   // Realtime Subscription
   useEffect(() => {
     if (!gameId) return;
 
     const channel = supabase
-      .channel(`game:${gameId}`)
+      .channel(`game_room_${gameId}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
         (payload) => {
+          console.log('Realtime Game Update:', payload);
           const newData = payload.new as GameState;
           setGameState(newData);
           
-          // Fallback sync if moves subscription misses or for status updates
+          // Sync chess logic
           const newGame = new Chess(newData.fen);
           setGame((current) => {
              if (current.fen() !== newData.fen) return newGame;
@@ -85,7 +96,6 @@ const GameRoom: React.FC = () => {
           });
           
           if (newData.status === 'finished') {
-             // Basic win detection just to trigger confetti
              if (newGame.isCheckmate()) {
                 confetti({
                     particleCount: 100,
@@ -100,12 +110,14 @@ const GameRoom: React.FC = () => {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'moves', filter: `game_id=eq.${gameId}` },
         (payload) => {
+            console.log('Realtime Move:', payload);
             const newMove = payload.new as MoveRecord;
-            // Immediate update from move for smoother experience
             setGame(new Chess(newMove.fen_after));
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log(`Subscription status for game ${gameId}:`, status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -114,36 +126,37 @@ const GameRoom: React.FC = () => {
 
   // Handle Move
   const onPieceDrop = (sourceSquare: string, targetSquare: string, piece: string): boolean => {
-    // Basic checks
     if (playerRole === 'spectator') return false;
     if (game.turn() !== playerRole) return false;
     if (gameState?.status === 'finished') return false;
+    if (gameState?.status === 'waiting') {
+        alert("Wait for an opponent to join!");
+        return false;
+    }
 
     try {
       const gameCopy = new Chess(game.fen());
       const move = gameCopy.move({
         from: sourceSquare,
         to: targetSquare,
-        promotion: piece[1]?.toLowerCase() ?? 'q', // auto-promote to queen for simplicity
+        promotion: piece[1]?.toLowerCase() ?? 'q',
       });
 
-      if (!move) return false; // Illegal move
+      if (!move) return false;
 
       // Optimistic Update
       setGame(gameCopy);
 
-      // Persist to Backend
       const updateGame = async () => {
         const newFen = gameCopy.fen();
         let status = 'active';
 
-        if (gameCopy.isCheckmate() || gameCopy.isDraw() || gameCopy.isStalemate() || gameCopy.isThreefoldRepetition()) {
+        if (gameCopy.isCheckmate() || gameCopy.isDraw() || gameCopy.isStalemate()) {
           status = 'finished';
         }
 
         const turnText = gameCopy.turn() === 'w' ? 'white' : 'black';
 
-        // 1. Insert Move
         await supabase.from('moves').insert({
           game_id: gameId,
           from_square: sourceSquare,
@@ -151,7 +164,6 @@ const GameRoom: React.FC = () => {
           fen_after: newFen,
         });
 
-        // 2. Update Game
         await supabase.from('games').update({
           fen: newFen,
           status: status,
@@ -199,11 +211,9 @@ const GameRoom: React.FC = () => {
   const isMyTurn = game.turn() === playerRole && gameState?.status !== 'finished';
   const turnColor = game.turn() === 'w' ? 'White' : 'Black';
 
-  // Derived Winner State
   let winnerText = '';
   if (gameState?.status === 'finished') {
       if (game.isCheckmate()) {
-          // If it's checkmate, the person whose turn it IS lost.
           const winner = game.turn() === 'w' ? 'Black' : 'White';
           winnerText = `Winner: ${winner}`;
       } else {
@@ -219,7 +229,6 @@ const GameRoom: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col md:flex-row">
-      {/* Sidebar / Info Panel */}
       <div className="w-full md:w-80 bg-slate-800 p-6 flex flex-col border-b md:border-b-0 md:border-r border-slate-700">
         <div className="mb-8">
             <h1 onClick={leaveGame} className="text-2xl font-bold text-emerald-400 cursor-pointer flex items-center gap-2 mb-1">
@@ -233,7 +242,12 @@ const GameRoom: React.FC = () => {
 
         <div className="flex-1 space-y-6">
             <div className="bg-slate-700/50 p-4 rounded-lg border border-slate-600">
-                <h3 className="text-sm uppercase text-slate-400 font-semibold mb-2">Game Status</h3>
+                <h3 className="text-sm uppercase text-slate-400 font-semibold mb-2 flex justify-between items-center">
+                    Game Status
+                    <button onClick={fetchGame} title="Refresh Status" className="text-slate-400 hover:text-white">
+                        <RefreshCw className="w-4 h-4" />
+                    </button>
+                </h3>
                 <div className={`text-lg font-bold flex items-center gap-2 ${
                     gameState?.status === 'active' && isMyTurn ? 'text-emerald-400' : 'text-white'
                 }`}>
@@ -266,9 +280,18 @@ const GameRoom: React.FC = () => {
                     </button>
                     <div className="flex items-start gap-2 text-xs text-blue-300/70 mt-3">
                         <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>Testing locally? Open the link in a <strong>Private/Incognito</strong> window or use the "Reset Profile" button on the home page.</span>
+                        <span>Testing locally? Open the link in a <strong>Private/Incognito</strong> window.</span>
                     </div>
                  </div>
+            )}
+            
+            {gameState?.status === 'waiting' && playerRole !== 'spectator' && (
+                <div className="p-3 bg-yellow-900/40 border border-yellow-700/50 rounded-lg text-yellow-200 text-xs">
+                     <p className="font-bold flex items-center gap-1 mb-1">
+                        <AlertTriangle className="w-3 h-3" /> Why am I waiting?
+                     </p>
+                     <p>You are waiting for a <strong>different</strong> player. If you open this link in the same browser, you are still "You".</p>
+                </div>
             )}
         </div>
 
@@ -279,10 +302,8 @@ const GameRoom: React.FC = () => {
         </div>
       </div>
 
-      {/* Game Board Area */}
       <div className="flex-1 flex items-center justify-center p-4 md:p-8 bg-slate-900">
         <div className="flex flex-col items-center gap-4 w-full">
-            {/* Opponent Info (Visual sugar) */}
             <div className="flex items-center gap-3 w-full max-w-[500px] text-slate-400">
                 <div className="w-8 h-8 rounded bg-slate-700 flex items-center justify-center">
                     {playerRole === 'w' ? 'B' : 'W'}
@@ -299,7 +320,6 @@ const GameRoom: React.FC = () => {
                 arePiecesDraggable={gameState?.status !== 'finished' && playerRole !== 'spectator'}
             />
 
-            {/* My Info */}
              <div className="flex items-center gap-3 w-full max-w-[500px] text-slate-200">
                 <div className="w-8 h-8 rounded bg-emerald-700 flex items-center justify-center font-bold">
                    {playerRole === 'w' ? 'W' : (playerRole === 'b' ? 'B' : 'S')}

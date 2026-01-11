@@ -44,7 +44,7 @@ const Home: React.FC = () => {
       console.error('Creation error:', err);
       // Handle collision or connection error
       if (err.code === '23505') { // Duplicate key error
-         setErrorMsg('Game ID collision, please try again.');
+         setErrorMsg('Game ID collision. Please try again.');
       } else {
          setErrorMsg(err.message || 'Failed to create game. Please check your connection.');
       }
